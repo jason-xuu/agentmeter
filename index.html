@@ -96,26 +96,29 @@
   .tile .mbar>i{display:block;height:100%;border-radius:2px}
   .minidot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
 
-  /* plugins compact list */
-  .plugs{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
-  .prow{display:grid;grid-template-columns:16px 1.6fr 1fr auto;gap:12px;align-items:center;
-    padding:11px 15px;border-top:1px solid var(--line);cursor:pointer;transition:background .12s}
-  .prow:first-child{border-top:0}
-  .prow:hover{background:var(--surface2)}
-  .prow .st{width:9px;height:9px;border-radius:50%;justify-self:center}
+  /* extensions — prominent cards, tokens-saved is the hero number */
+  .exts{display:grid;grid-template-columns:repeat(auto-fill,minmax(236px,1fr));gap:11px}
+  .ext{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 15px;
+    display:flex;flex-direction:column;min-height:150px;transition:border-color .14s}
+  .ext:hover{border-color:var(--line2)}
+  .ext.broken{border-color:color-mix(in srgb,var(--bad) 42%,var(--line))}
+  .ext .top{display:flex;align-items:flex-start;gap:8px}
+  .st{width:9px;height:9px;border-radius:50%;flex:none;margin-top:3px}
   .st.up{background:var(--ok)} .st.down{background:var(--bad)} .st.neutral{background:var(--mute)}
-  .pname{font-weight:600;font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  .pkind{color:var(--mute);font-size:11px;font-weight:400}
-  .pmid{color:var(--dim);font-size:11.5px}
-  .pval{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right;font-size:13px;font-weight:600}
-  .pval.saved{color:var(--ok)} .pval.neg{color:var(--warn)} .pval.nm{color:var(--mute);font-weight:400;font-style:italic;font-size:11.5px}
-  .caret{color:var(--mute);font-size:10px;transition:transform .15s;justify-self:end;margin-left:4px}
-  .prow.open .caret{transform:rotate(90deg)}
-  .pdetail{display:none;padding:0 15px 14px 43px;border-top:1px solid var(--line);background:var(--surface2)}
-  .prow.open + .pdetail{display:block}
-  .pdetail .d{color:var(--dim);font-size:12px;margin-top:11px;max-width:70ch}
-  .pdetail .fix{color:var(--ink);font-size:12px;margin-top:8px}
-  .pdetail .note{color:var(--mute);font-size:11px;margin-top:6px}
+  .ext .en{font-weight:600;font-size:13.5px;line-height:1.2}
+  .ext .ek{color:var(--mute);font-size:10.5px;margin-top:2px}
+  .ext .clis2{margin-left:auto;display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+  .ext .save{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:28px;font-weight:600;
+    letter-spacing:-.02em;line-height:1;margin-top:13px}
+  .ext .save small{font-size:12px;color:var(--mute);font-weight:400;margin-left:5px;letter-spacing:0}
+  .ext .save.pos{color:var(--ok)} .ext .save.neg{color:var(--warn)}
+  .ext .save.nm{font-size:15px;color:var(--mute);font-style:italic;font-weight:400}
+  .ext .sub2{color:var(--mute);font-size:11px;margin-top:6px;line-height:1.4;min-height:15px}
+  .ext .estat{color:var(--dim);font-size:11px;margin-top:9px}
+  .ext .fixline{color:var(--ink);font-size:11px;margin-top:7px;line-height:1.45}
+  .ext .ebar{height:4px;border-radius:2px;background:var(--surface2);margin-top:auto;overflow:hidden}
+  .ext .ebar>i{display:block;height:100%;border-radius:2px;background:var(--ok);transition:width .35s ease}
+  .sect h2.big{font-size:13px;color:var(--ink);letter-spacing:.06em}
 
   .cli{font-family:var(--mono);font-size:9.5px;font-weight:600;padding:2px 6px;border-radius:5px;text-transform:lowercase}
   .cli.claude{background:color-mix(in srgb,var(--claude) 20%,transparent);color:var(--claude)}
@@ -209,8 +212,8 @@
   <div class="sect"><h2>Sessions</h2><span class="c" id="sesscount"></span><span class="link" id="toggleSess"></span></div>
   <div class="tiles" id="tiles"></div>
 
-  <div class="sect"><h2>Extensions</h2><span class="c" id="extcount"></span></div>
-  <div class="plugs" id="plugs"></div>
+  <div class="sect"><h2 class="big">Extensions</h2><span class="c" id="extcount"></span></div>
+  <div class="exts" id="exts"></div>
 
   <footer id="foot"></footer>
 </div>
@@ -232,7 +235,6 @@ const $ = id => document.getElementById(id);
 
 let state=null, prevToday=null, showAll=false, openSession=null;
 let sigKpi='', sigTiles='', sigPlugs='', sigBurn='';
-const openPlugs=new Set();
 
 // ── charts ───────────────────────────────────────────────────────────────
 function drawBurn(byHour){
@@ -340,44 +342,57 @@ function updateTileLive(el,s){
   const idle=el.querySelector('[data-rel]'); if(idle) idle.textContent=rel(s.lastTs);
 }
 
-// ── plugins ──────────────────────────────────────────────────────────────────
-function pvalHtml(p){
-  if(p.savedTokens==null) return `<span class="pval nm">not measured</span>`;
-  if(p.savedTokens<0) return `<span class="pval neg">${fmt(p.savedTokens)}</span>`;
-  return `<span class="pval saved">${fmt(p.savedTokens)}</span>`;
-}
-function renderPlugs(d){
-  // Structural signature only — NOT the live savedTokens (headroom's grows every
-  // tick). Value changes update in place below, so an expanded row stays open.
-  const sig=d.plugins.map(p=>`${p.id}:${p.active}:${p.alwaysOnTokens}:${p.status}:${(p.clis||[]).join('+')}`).join('|');
-  const saving=d.plugins.filter(p=>typeof p.savedTokens==='number'&&p.savedTokens>0).length;
-  const broken=d.plugins.filter(p=>!p.active).length;
-  $('extcount').textContent=`${d.plugins.length} installed · ${saving} saving${broken?` · ${broken} need attention`:''}`;
-  if(sig!==sigPlugs){ sigPlugs=sig; buildPlugs(d); }
-  // in-place value refresh (cheap; preserves expand state)
-  d.plugins.forEach(p=>{ const cell=document.querySelector(`.prow[data-pid="${cssq(p.id)}"] .pcell`); if(cell) cell.innerHTML=pvalHtml(p)+`<span class="caret">▸</span>`; });
-}
+// ── extensions (prominent savings cards; dynamic for any current/future plugin) ─
 const cssq=s=>String(s).replace(/"/g,'\\"');
-function buildPlugs(d){
-  $('plugs').innerHTML=d.plugins.map(p=>{
+function extSave(p){
+  if(p.savedTokens==null) return {cls:'nm', html:'not measured'};
+  if(p.savedTokens<0) return {cls:'neg', html:fmt(p.savedTokens)+'<small>net overhead</small>'};
+  return {cls:'pos', html:fmt(p.savedTokens)+(p.savedTokens>0?'<small>saved</small>':'')};
+}
+function extSub(p){
+  if(typeof p.savedTokens==='number' && p.savedTokens>0)
+    return ((p.savedCost?usd(p.savedCost)+' avoided':'')+(p.savedPct?` · ${p.savedPct}% smaller`:'')) || 'saved to date';
+  if(p.savedTokens<0) return 'its ledger nets negative so far';
+  return esc(p.tokensNote||'exposes no savings ledger');
+}
+function renderExts(d){
+  const measured=d.plugins.filter(p=>typeof p.savedTokens==='number');
+  const totalSaved=measured.filter(p=>p.savedTokens>0).reduce((a,p)=>a+p.savedTokens,0);
+  const totalCost=d.plugins.reduce((a,p)=>a+(p.savedCost||0),0);
+  const saving=measured.filter(p=>p.savedTokens>0).length, broken=d.plugins.filter(p=>!p.active).length;
+  $('extcount').innerHTML=`<b style="color:var(--ok)">${fmt(totalSaved)}</b> saved · ${usd(totalCost)} avoided · `+
+    `${saving} of ${d.plugins.length} extensions saving${broken?` · <b style="color:var(--bad)">${broken} need attention</b>`:''}`;
+  // Structural signature only; hero number + share bar update in place below so
+  // headroom's live-growing savings never trigger a full rebuild.
+  const sig=d.plugins.map(p=>`${p.id}:${p.active}:${p.alwaysOnTokens}:${p.status}:${(p.clis||[]).join('+')}`).join('|');
+  if(sig!==sigPlugs){ sigPlugs=sig; buildExts(d); }
+  const maxSave=Math.max(1,...measured.map(p=>p.savedTokens>0?p.savedTokens:0));
+  d.plugins.forEach(p=>{
+    const card=$('exts').querySelector(`[data-eid="${cssq(p.id)}"]`); if(!card) return;
+    const s=extSave(p), sv=card.querySelector('.save'); if(sv){ sv.className='save '+s.cls; sv.innerHTML=s.html; }
+    const sub=card.querySelector('.sub2'); if(sub) sub.innerHTML=extSub(p);
+    const bar=card.querySelector('.ebar>i'); if(bar) bar.style.width=(p.savedTokens>0?Math.max(2,Math.round(p.savedTokens/maxSave*100)):0)+'%';
+  });
+}
+function buildExts(d){
+  const maxSave=Math.max(1,...d.plugins.map(p=>typeof p.savedTokens==='number'&&p.savedTokens>0?p.savedTokens:0));
+  $('exts').innerHTML=d.plugins.map(p=>{
     const stcls=p.active?(typeof p.savedTokens==='number'&&p.savedTokens<0?'neutral':'up'):'down';
-    const val=pvalHtml(p);
-    const cost=p.alwaysOnTokens!=null?`${p.alwaysOnTokens.toLocaleString()} tok/session`:'on demand';
+    const s=extSave(p);
+    const barw=(typeof p.savedTokens==='number'&&p.savedTokens>0)?Math.max(2,Math.round(p.savedTokens/maxSave*100)):0;
     const fix = !p.active ? (
-      p.id==='rtk'?`Symlink it onto PATH: <code>ln -s ~/.headroom/bin/rtk /usr/local/bin/rtk</code>`:
-      p.id==='headroom'?`Start it: <code>headroom proxy</code> then <code>headroom wrap claude</code>`:'') : '';
-    return `<div class="prow${openPlugs.has(p.id)?' open':''}" data-pid="${esc(p.id)}">
-        <span class="st ${stcls}"></span>
-        <div class="pname">${esc(p.name)} <span class="pkind">${esc(p.kind)}</span> ${(p.clis||[]).map(c=>`<span class="cli ${c}">${c}</span>`).join('')}</div>
-        <div class="pmid">${esc(p.status)}</div>
-        <div class="pcell" style="display:flex;align-items:center;justify-content:flex-end">${val}<span class="caret">▸</span></div>
-      </div>
-      <div class="pdetail">
-        <div class="d">${esc(p.detail)}</div>
-        ${fix?`<div class="fix">${fix}</div>`:''}
-        ${p.tokensNote?`<div class="note">${esc(p.tokensNote)}</div>`:''}
-        <div class="note">${cost}${p.savedCost?` · ${usd(p.savedCost)} avoided lifetime`:''}${p.savedPct?` · ${p.savedPct}% smaller`:''}</div>
-      </div>`;
+      p.id==='rtk'?`Fix: <code>ln -s ~/.headroom/bin/rtk /usr/local/bin/rtk</code>`:
+      p.id==='headroom'?`Fix: <code>headroom proxy</code> then <code>headroom wrap claude</code>`:'') : '';
+    return `<div class="ext${p.active?'':' broken'}" data-eid="${esc(p.id)}" title="${esc(p.detail)}">
+      <div class="top"><span class="st ${stcls}"></span>
+        <div><div class="en">${esc(p.name)}</div><div class="ek">${esc(p.kind)}</div></div>
+        <div class="clis2">${(p.clis||[]).map(c=>`<span class="cli ${c}">${c}</span>`).join('')}</div></div>
+      <div class="save ${s.cls}">${s.html}</div>
+      <div class="sub2">${extSub(p)}</div>
+      <div class="estat">${esc(p.status)}</div>
+      ${fix?`<div class="fixline">${fix}</div>`:''}
+      <div class="ebar"><i style="width:${barw}%"></i></div>
+    </div>`;
   }).join('');
 }
 
@@ -417,7 +432,6 @@ function fillDrawer(){
 // ── event wiring (delegation) ────────────────────────────────────────────────
 $('tiles').addEventListener('click',e=>{const t=e.target.closest('.tile'); if(!t)return; const [cli,...id]=t.dataset.sid.split(':'); openDrawer(cli,id.join(':'));});
 $('tiles').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){const t=e.target.closest('.tile'); if(t){e.preventDefault(); const [cli,...id]=t.dataset.sid.split(':'); openDrawer(cli,id.join(':'));}}});
-$('plugs').addEventListener('click',e=>{const r=e.target.closest('.prow'); if(!r)return; const on=r.classList.toggle('open'); const id=r.dataset.pid; on?openPlugs.add(id):openPlugs.delete(id);});
 $('scrim').addEventListener('click',closeDrawer);
 $('toggleSess').addEventListener('click',()=>{showAll=!showAll; sigTiles=''; if(state) renderTiles(state);});
 document.addEventListener('keydown',e=>{if(e.key==='Escape') closeDrawer();});
@@ -433,7 +447,7 @@ function render(d){
     const bh=d.charts&&d.charts.byHour; if(bh){ const bsig=bh.claude.join(',')+'|'+bh.codex.join(','); if(bsig!==sigBurn){sigBurn=bsig; drawBurn(bh);} }
     const claudeToday=d.spend.claudeTodayTotal||0;
     drawRing(claudeToday? (d.spend.today.cacheRead/claudeToday*100) : null);
-    renderTiles(d); renderPlugs(d);
+    renderTiles(d); renderExts(d);
     if(openSession) fillDrawer();
     $('dot').className='dot';
     $('livetxt').textContent='live · '+new Date(d.ts).toLocaleTimeString();
