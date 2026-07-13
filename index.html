@@ -3,241 +3,451 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>agentmeter · AI CLI dashboard</title>
+<title>agentmeter</title>
 <style>
+  /* ── telemetry instrument · Claude Code + Codex ──────────────────────────
+     Two identity hues carry every colored mark (claude = violet, codex = teal;
+     both CVD-validated). Chrome stays quiet; the token-burn equalizer is the one
+     loud element. system-ui for chrome, SF Mono for data. */
   :root{
-    --bg:#0d0f12; --panel:#14171c; --panel2:#1a1e24; --line:#252b33;
-    --fg:#e6e9ef; --dim:#8b95a4; --faint:#5b6472;
-    --ok:#3fb950; --bad:#f85149; --warn:#d29922; --info:#58a6ff; --accent:#a371f7;
-    --codex:#2dd4bf;
+    --bg:#0a0d13; --surface:#0f131b; --surface2:#151a24; --line:#212734; --line2:#2b3444;
+    --ink:#e9edf4; --dim:#9aa5b4; --mute:#616b7c;
+    --claude:#9a6fe0; --codex:#2ba898;
+    --ok:#46b877; --warn:#d9a441; --bad:#ef5f57;
+    --grid:rgba(255,255,255,.055); --tip:#1c2330;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
+    --sans:system-ui,-apple-system,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+    --r:10px;
   }
   @media (prefers-color-scheme: light){
-    :root{ --bg:#f6f7f9; --panel:#fff; --panel2:#f0f2f5; --line:#dfe3e8;
-           --fg:#1c2128; --dim:#57606a; --faint:#8c959f; }
+    :root{ --bg:#f4f6f9; --surface:#ffffff; --surface2:#f1f3f7; --line:#e4e8ee; --line2:#d3d9e2;
+           --ink:#161b23; --dim:#54606f; --mute:#8b95a4;
+           --claude:#7c4fd0; --codex:#00998a; --grid:rgba(0,0,0,.05); --tip:#ffffff; }
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--fg);
-    font:14px/1.5 ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
-    padding:28px 22px 60px}
-  .wrap{max-width:1080px;margin:0 auto}
-  header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:22px}
-  h1{font-size:17px;margin:0;letter-spacing:.3px;font-weight:600}
-  h1 .tag{color:var(--faint);font-weight:400}
-  .live{display:flex;align-items:center;gap:6px;color:var(--dim);font-size:12px;margin-left:auto}
-  .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);
-    box-shadow:0 0 0 0 rgba(63,185,80,.6);animation:p 2s infinite}
-  .dot.stale{background:var(--warn);animation:none}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);
+    padding:22px 20px 48px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1120px;margin:0 auto}
+  .eyebrow{font-size:10.5px;text-transform:uppercase;letter-spacing:.13em;color:var(--mute);font-weight:600}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* header */
+  header{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+  .brand{font-weight:700;font-size:16px;letter-spacing:-.01em}
+  .brand b{color:var(--claude)}
+  .sub{color:var(--mute);font-size:12px}
+  .live{margin-left:auto;display:flex;align-items:center;gap:7px;color:var(--dim);font-size:12px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 rgba(70,184,119,.6);animation:pulse 2.4s infinite}
   .dot.dead{background:var(--bad);animation:none}
-  @keyframes p{0%{box-shadow:0 0 0 0 rgba(63,185,80,.5)}70%{box-shadow:0 0 0 7px rgba(63,185,80,0)}100%{box-shadow:0 0 0 0 rgba(63,185,80,0)}}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(70,184,119,.5)}70%{box-shadow:0 0 0 6px rgba(70,184,119,0)}100%{box-shadow:0 0 0 0 rgba(70,184,119,0)}}
 
-  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:14px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:15px 17px}
-  .card .k{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.7px}
-  .card .v{font-size:25px;font-weight:600;margin-top:7px;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
-  .card .s{color:var(--faint);font-size:11.5px;margin-top:5px}
-  .v.ok{color:var(--ok)} .v.warnc{color:var(--warn)}
-  .flash{animation:fl .6s ease-out}
-  @keyframes fl{0%{color:var(--info)}100%{}}
+  /* KPI strip */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin-bottom:12px}
+  .kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:13px 15px}
+  .kpi .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:26px;font-weight:600;
+    letter-spacing:-.02em;margin-top:8px;line-height:1}
+  .kpi .v.ok{color:var(--ok)} .kpi .v.warn{color:var(--warn)}
+  .kpi .s{color:var(--mute);font-size:11.5px;margin-top:7px}
+  .kpi .s b{color:var(--dim);font-weight:500}
+  .flash{animation:flash .7s ease-out}
+  @keyframes flash{0%{color:var(--codex)}100%{}}
 
-  .alerts{display:flex;flex-direction:column;gap:8px;margin-bottom:18px}
-  .alert{background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.35);
-    border-left:3px solid var(--bad);border-radius:7px;padding:10px 13px;font-size:12.5px}
-  .alert.w{background:rgba(210,153,34,.08);border-color:rgba(210,153,34,.35);border-left-color:var(--warn)}
-  .alert b{color:var(--fg)} .alert .fix{color:var(--dim);display:block;margin-top:4px}
-  code{background:var(--panel2);padding:1.5px 5px;border-radius:4px;font-size:11.5px;color:var(--info)}
+  /* charts row */
+  .charts{display:grid;grid-template-columns:2.4fr 1fr;gap:11px;margin-bottom:12px}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px}
+  .phead{display:flex;align-items:baseline;gap:8px;margin-bottom:2px}
+  .phead .t{font-size:12px;font-weight:600;color:var(--ink)}
+  .phead .legend{margin-left:auto;display:flex;gap:12px;font-size:11px;color:var(--dim)}
+  .lg{display:inline-flex;align-items:center;gap:5px}
+  .lg i{width:8px;height:8px;border-radius:2px;display:inline-block}
+  #burn{width:100%;height:150px;display:block;margin-top:8px;touch-action:none}
+  .xtick{fill:var(--mute);font:10px var(--mono)}
+  .empty{color:var(--mute);font-size:12px;text-align:center;padding:44px 0}
 
-  .sect{display:flex;align-items:baseline;gap:10px;margin:22px 2px 9px}
-  .sect h2{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);font-weight:600;margin:0}
-  .sect .c{color:var(--faint);font-size:11.5px}
+  /* cache ring panel */
+  .ringwrap{display:flex;flex-direction:column;align-items:center;justify-content:center;height:150px;margin-top:8px;position:relative}
+  #ring{width:118px;height:118px;transform:rotate(-90deg)}
+  .ringlabel{position:absolute;top:50%;left:0;right:0;text-align:center;transform:translateY(-50%);pointer-events:none}
+  .ringlabel .p{font-family:var(--mono);font-size:27px;font-weight:600;letter-spacing:-.02em}
+  .ringlabel .l{font-size:10px;color:var(--mute);text-transform:uppercase;letter-spacing:.08em;margin-top:2px}
 
-  table{width:100%;border-collapse:collapse;background:var(--panel);
-    border:1px solid var(--line);border-radius:9px;overflow:hidden}
-  th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.7px;
-    color:var(--dim);font-weight:500;padding:11px 14px;border-bottom:1px solid var(--line);background:var(--panel2)}
-  td{padding:13px 14px;border-bottom:1px solid var(--line);vertical-align:top}
-  tr:last-child td{border-bottom:0}
-  th.n,td.n{text-align:right;font-variant-numeric:tabular-nums}
+  /* section head */
+  .sect{display:flex;align-items:baseline;gap:10px;margin:20px 2px 10px}
+  .sect h2{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--dim);font-weight:700;margin:0}
+  .sect .c{color:var(--mute);font-size:11.5px}
+  .sect .link{margin-left:auto;color:var(--dim);font-size:11.5px;cursor:pointer;user-select:none}
+  .sect .link:hover{color:var(--ink)}
 
-  .pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:2.5px 8px;
-    border-radius:20px;white-space:nowrap;font-weight:500}
-  .pill.up{background:rgba(63,185,80,.13);color:var(--ok)}
-  .pill.down{background:rgba(248,81,73,.13);color:var(--bad)}
-  .pill.idle{background:var(--panel2);color:var(--faint)}
-  .pname{font-weight:600}
-  .pkind{color:var(--faint);font-size:11px;margin-top:2px}
-  .pdetail{color:var(--dim);font-size:11.5px;margin-top:6px;max-width:44ch}
-  .nm{color:var(--faint);font-style:italic;font-size:11.5px}
-  .neg{color:var(--warn)}
-  .saved{color:var(--ok);font-weight:600}
-  .note{color:var(--faint);font-size:11px;margin-top:4px;max-width:34ch;line-height:1.45}
+  /* session tiles */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(184px,1fr));gap:10px}
+  .tile{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:13px 14px;
+    cursor:pointer;transition:border-color .14s,transform .14s;position:relative;overflow:hidden}
+  .tile:hover{border-color:var(--line2);transform:translateY(-1px)}
+  .tile:focus-visible{outline:2px solid var(--claude);outline-offset:2px}
+  .tile .top{display:flex;align-items:center;gap:7px}
+  .tile .cdot{width:8px;height:8px;border-radius:50%;flex:none}
+  .tile .proj{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tile .live{margin-left:auto;font-size:9.5px;color:var(--ok);display:flex;align-items:center;gap:4px}
+  .tile .idle{margin-left:auto;font-size:9.5px;color:var(--mute)}
+  .tile .num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:22px;font-weight:600;margin-top:10px;letter-spacing:-.02em;line-height:1}
+  .tile .meta{color:var(--mute);font-size:10.5px;margin-top:5px;display:flex;gap:8px}
+  .tile .mbar{height:3px;border-radius:2px;background:var(--surface2);margin-top:9px;overflow:hidden}
+  .tile .mbar>i{display:block;height:100%;border-radius:2px}
+  .minidot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
 
-  .clibadge{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.4px;
-    padding:2px 7px;border-radius:5px;text-transform:lowercase}
-  .clibadge.claude{background:rgba(163,113,247,.15);color:var(--accent)}
-  .clibadge.codex{background:rgba(45,212,191,.15);color:var(--codex)}
-  .clis{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
+  /* plugins compact list */
+  .plugs{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+  .prow{display:grid;grid-template-columns:16px 1.6fr 1fr auto;gap:12px;align-items:center;
+    padding:11px 15px;border-top:1px solid var(--line);cursor:pointer;transition:background .12s}
+  .prow:first-child{border-top:0}
+  .prow:hover{background:var(--surface2)}
+  .prow .st{width:9px;height:9px;border-radius:50%;justify-self:center}
+  .st.up{background:var(--ok)} .st.down{background:var(--bad)} .st.neutral{background:var(--mute)}
+  .pname{font-weight:600;font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .pkind{color:var(--mute);font-size:11px;font-weight:400}
+  .pmid{color:var(--dim);font-size:11.5px}
+  .pval{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right;font-size:13px;font-weight:600}
+  .pval.saved{color:var(--ok)} .pval.neg{color:var(--warn)} .pval.nm{color:var(--mute);font-weight:400;font-style:italic;font-size:11.5px}
+  .caret{color:var(--mute);font-size:10px;transition:transform .15s;justify-self:end;margin-left:4px}
+  .prow.open .caret{transform:rotate(90deg)}
+  .pdetail{display:none;padding:0 15px 14px 43px;border-top:1px solid var(--line);background:var(--surface2)}
+  .prow.open + .pdetail{display:block}
+  .pdetail .d{color:var(--dim);font-size:12px;margin-top:11px;max-width:70ch}
+  .pdetail .fix{color:var(--ink);font-size:12px;margin-top:8px}
+  .pdetail .note{color:var(--mute);font-size:11px;margin-top:6px}
 
-  .bar{height:3px;background:var(--panel2);border-radius:2px;margin-top:7px;overflow:hidden;max-width:150px;margin-left:auto}
-  .bar>i{display:block;height:100%;background:var(--ok);border-radius:2px}
+  .cli{font-family:var(--mono);font-size:9.5px;font-weight:600;padding:2px 6px;border-radius:5px;text-transform:lowercase}
+  .cli.claude{background:color-mix(in srgb,var(--claude) 20%,transparent);color:var(--claude)}
+  .cli.codex{background:color-mix(in srgb,var(--codex) 20%,transparent);color:var(--codex)}
+  code{background:var(--surface2);padding:1.5px 6px;border-radius:5px;font:11.5px var(--mono);color:var(--codex)}
 
-  footer{margin-top:20px;color:var(--faint);font-size:11.5px;line-height:1.7}
+  /* drawer */
+  .scrim{position:fixed;inset:0;background:rgba(4,6,10,.55);opacity:0;pointer-events:none;transition:opacity .2s;z-index:40}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .drawer{position:fixed;top:0;right:0;height:100%;width:min(420px,92vw);background:var(--surface);
+    border-left:1px solid var(--line2);transform:translateX(100%);transition:transform .24s cubic-bezier(.4,0,.2,1);
+    z-index:41;overflow-y:auto;padding:22px 22px 40px}
+  .drawer.on{transform:translateX(0)}
+  .dclose{position:absolute;top:16px;right:16px;width:30px;height:30px;border:1px solid var(--line);
+    border-radius:8px;background:transparent;color:var(--dim);cursor:pointer;font-size:15px;line-height:1}
+  .dclose:hover{color:var(--ink);border-color:var(--line2)}
+  .dhead{display:flex;align-items:center;gap:9px;margin-bottom:4px}
+  .dhead .cdot{width:10px;height:10px;border-radius:50%}
+  .dhead .p{font-size:17px;font-weight:700}
+  .did{color:var(--mute);font:11px var(--mono);word-break:break-all;margin-bottom:18px}
+  .dbig{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:34px;font-weight:600;letter-spacing:-.02em}
+  .dbig .u{font-size:13px;color:var(--mute);font-weight:400;margin-left:6px}
+  .compbar{display:flex;height:8px;border-radius:4px;overflow:hidden;margin:14px 0 4px;gap:2px;background:var(--surface2)}
+  .compbar>i{height:100%}
+  .brk{margin-top:16px}
+  .brk .row{display:flex;justify-content:space-between;padding:7px 0;border-top:1px solid var(--line);font-size:12.5px}
+  .brk .row:first-child{border-top:0}
+  .brk .row .k{color:var(--dim)}
+  .brk .row .val{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .dsub{font-size:10.5px;text-transform:uppercase;letter-spacing:.12em;color:var(--mute);font-weight:700;margin:22px 0 9px}
+  .dext{display:flex;align-items:center;gap:9px;padding:8px 0;border-top:1px solid var(--line);font-size:12.5px}
+  .dext:first-of-type{border-top:0}
+  .dext .st{width:8px;height:8px;border-radius:50%}
+  .dext .nm{font-weight:600}
+  .dext .k{color:var(--mute);font-size:11px;margin-left:auto}
+  .dnote{color:var(--mute);font-size:11px;margin-top:12px;line-height:1.5}
+
+  /* shared tooltip */
+  #tip{position:fixed;pointer-events:none;background:var(--tip);border:1px solid var(--line2);
+    border-radius:8px;padding:8px 10px;font:11.5px var(--mono);color:var(--ink);opacity:0;
+    transition:opacity .1s;z-index:50;box-shadow:0 6px 20px rgba(0,0,0,.35);white-space:nowrap}
+  #tip.on{opacity:1}
+  #tip .h{color:var(--mute);margin-bottom:4px;font-family:var(--sans);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+  #tip .r{display:flex;justify-content:space-between;gap:16px}
+
+  footer{margin-top:22px;color:var(--mute);font-size:11px;line-height:1.7}
   footer b{color:var(--dim);font-weight:600}
+
+  @media (max-width:820px){
+    .kpis{grid-template-columns:repeat(2,1fr)}
+    .charts{grid-template-columns:1fr}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
-<body>
+<body data-palette="#9a6fe0,#2ba898">
 <div class="wrap">
   <header>
-    <h1>agentmeter <span class="tag">· Claude Code + Codex</span></h1>
-    <div class="live"><span class="dot" id="dot"></span><span id="livetxt">connecting…</span></div>
+    <span class="brand"><b>agent</b>meter</span>
+    <span class="sub">telemetry · Claude Code + Codex</span>
+    <span class="live"><span class="dot" id="dot"></span><span id="livetxt">connecting…</span></span>
   </header>
 
-  <div class="cards" id="cards"></div>
-  <div class="alerts" id="alerts"></div>
+  <div class="kpis" id="kpis"></div>
 
-  <div class="sect"><h2>Live sessions</h2><span class="c" id="sesscount"></span></div>
-  <table>
-    <thead>
-      <tr>
-        <th>CLI</th><th>Session</th>
-        <th class="n">Total tokens</th>
-        <th class="n">Today</th>
-        <th class="n">Output</th>
-        <th class="n">Cache read</th>
-        <th>Last active</th>
-      </tr>
-    </thead>
-    <tbody id="sessions"></tbody>
-  </table>
+  <div class="charts">
+    <div class="panel">
+      <div class="phead">
+        <span class="t">Token burn today</span>
+        <span class="eyebrow" style="letter-spacing:.08em">by hour · local</span>
+        <span class="legend">
+          <span class="lg"><i style="background:var(--claude)"></i>Claude Code</span>
+          <span class="lg"><i style="background:var(--codex)"></i>Codex</span>
+        </span>
+      </div>
+      <svg id="burn" viewBox="0 0 720 150" preserveAspectRatio="none" role="img" aria-label="Token burn today by hour"></svg>
+    </div>
+    <div class="panel">
+      <div class="phead"><span class="t">Cache-read share</span><span class="eyebrow" style="letter-spacing:.08em">claude · today</span></div>
+      <div class="ringwrap">
+        <svg id="ring" viewBox="0 0 42 42" aria-hidden="true">
+          <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--surface2)" stroke-width="4"></circle>
+          <circle id="ringfill" cx="21" cy="21" r="15.9" fill="none" stroke="var(--codex)" stroke-width="4"
+            stroke-linecap="round" stroke-dasharray="0 100" stroke-dashoffset="0"></circle>
+        </svg>
+        <div class="ringlabel"><div class="p mono" id="ringpct">—</div><div class="l">cached</div></div>
+      </div>
+    </div>
+  </div>
 
-  <div class="sect"><h2>Plugins &amp; extensions</h2><span class="c" id="plugcount"></span></div>
-  <table>
-    <thead>
-      <tr>
-        <th>Plugin</th><th>Status</th>
-        <th class="n">Tokens / session</th>
-        <th class="n">Tokens saved</th>
-      </tr>
-    </thead>
-    <tbody id="rows"></tbody>
-  </table>
+  <div class="sect"><h2>Sessions</h2><span class="c" id="sesscount"></span><span class="link" id="toggleSess"></span></div>
+  <div class="tiles" id="tiles"></div>
+
+  <div class="sect"><h2>Extensions</h2><span class="c" id="extcount"></span></div>
+  <div class="plugs" id="plugs"></div>
 
   <footer id="foot"></footer>
 </div>
 
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true"></aside>
+<div id="tip"></div>
+
 <script>
+"use strict";
 const fmt = n => n==null ? '—' : Math.abs(n)>=1e6 ? (n/1e6).toFixed(1)+'M'
-  : Math.abs(n)>=1e3 ? (n/1e3).toFixed(1)+'k' : String(n);
+  : Math.abs(n)>=1e3 ? (n/1e3).toFixed(1)+'k' : String(Math.round(n));
 const usd = n => n==null ? '—' : '$'+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
-const esc = s => String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const esc = s => String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const rel = ts => { const s=Math.max(0,Math.round((Date.now()-ts)/1000));
-  return s<60?s+'s ago':s<3600?Math.floor(s/60)+'m ago':s<86400?Math.floor(s/3600)+'h ago':Math.floor(s/86400)+'d ago'; };
-const clis = arr => (arr||[]).map(c=>`<span class="clibadge ${c}">${c}</span>`).join('');
+  return s<60?s+'s':s<3600?Math.floor(s/60)+'m':s<86400?Math.floor(s/3600)+'h':Math.floor(s/86400)+'d'; };
+const col = cli => cli==='codex' ? 'var(--codex)' : 'var(--claude)';
+const $ = id => document.getElementById(id);
 
-let prevToday = null;
-function render(d){
-  if(d.error){ document.getElementById('livetxt').textContent='error: '+d.error; return; }
-  const t=d.totals, sp=d.spend, sess=d.sessions||[];
+let state=null, prevToday=null, showAll=false, openSession=null;
+let sigKpi='', sigTiles='', sigPlugs='', sigBurn='';
+const openPlugs=new Set();
 
-  const flash = (sp.todayTotal!==prevToday && prevToday!==null) ? ' flash' : '';
-  prevToday = sp.todayTotal;
+// ── charts ───────────────────────────────────────────────────────────────
+function drawBurn(byHour){
+  const c=byHour.claude, x=byHour.codex, svg=$('burn');
+  const totals=c.map((v,i)=>v+x[i]);
+  let first=totals.findIndex(v=>v>0);
+  const nowH=new Date().getHours();
+  if(first===-1){ svg.innerHTML=`<text x="360" y="78" text-anchor="middle" class="xtick" style="font-size:12px">no tokens spent yet today</text>`; return; }
+  const last=Math.max(nowH, totals.reduce((m,v,i)=>v>0?i:m,first));
+  const hrs=[]; for(let h=first;h<=last;h++) hrs.push(h);
+  const W=720,H=150, padB=20, padT=8, plotH=H-padB-padT;
+  const max=Math.max(...hrs.map(h=>totals[h]),1);
+  const slot=W/hrs.length, bw=Math.min(slot*0.62,34), gap=2;
+  const y=v=>plotH*(v/max), rx=Math.min(4,bw/2);
+  let s='';
+  // recessive baseline
+  s+=`<line x1="0" y1="${padT+plotH}" x2="${W}" y2="${padT+plotH}" stroke="var(--grid)" stroke-width="1"/>`;
+  hrs.forEach((h,i)=>{
+    const cx=i*slot+slot/2, x0=cx-bw/2;
+    const ch=y(c[h]), xh=y(x[h]);
+    const base=padT+plotH;
+    // claude segment (bottom)
+    if(c[h]>0) s+=`<rect x="${x0.toFixed(1)}" y="${(base-ch).toFixed(1)}" width="${bw.toFixed(1)}" height="${ch.toFixed(1)}" rx="${x[h]>0?0:rx}" fill="var(--claude)"/>`;
+    // codex segment (top, 2px surface gap)
+    if(x[h]>0){ const top=base-ch-gap-xh; s+=`<rect x="${x0.toFixed(1)}" y="${Math.max(padT,top).toFixed(1)}" width="${bw.toFixed(1)}" height="${xh.toFixed(1)}" rx="${rx}" fill="var(--codex)"/>`; }
+    // x ticks every ~3h and at ends
+    if(i===0||i===hrs.length-1||h%3===0){ const lab=h===0?'12a':h<12?h+'a':h===12?'12p':(h-12)+'p';
+      s+=`<text x="${cx.toFixed(1)}" y="${H-6}" text-anchor="middle" class="xtick">${lab}</text>`; }
+  });
+  svg.innerHTML=s;
+  svg._hrs=hrs; svg._slot=slot; svg._by={c,x,totals};
+}
+function drawRing(pct){
+  const p=Math.max(0,Math.min(100,pct||0));
+  $('ringfill').setAttribute('stroke-dasharray',`${p.toFixed(1)} ${(100-p).toFixed(1)}`);
+  $('ringpct').textContent=(pct==null?'—':Math.round(p)+'%');
+}
 
-  // Totals. "Tokens saved" counts ONLY plugins that actually measure it.
-  document.getElementById('cards').innerHTML = `
-    <div class="card">
-      <div class="k">Total tokens saved</div>
-      <div class="v ok">${fmt(t.savedTokens)}</div>
-      <div class="s">${usd(t.savedCost)} avoided · from ${t.measuredCount} of ${t.measuredCount+t.unmeasuredCount} plugins</div>
-    </div>
-    <div class="card">
-      <div class="k">Tokens used today</div>
-      <div class="v${flash}">${fmt(sp.todayTotal)}</div>
-      <div class="s">claude ${fmt(sp.claudeTodayTotal)} · codex ${fmt(sp.codexTodayTotal)}</div>
-    </div>
-    <div class="card">
-      <div class="k">Live sessions</div>
-      <div class="v">${d.activeSessions}<span style="color:var(--faint);font-size:16px">/${sess.length}</span></div>
-      <div class="s">active now · across Claude Code + Codex</div>
-    </div>
-    <div class="card">
-      <div class="k">Always-on context cost</div>
-      <div class="v warnc">${fmt(t.alwaysOnTokens)}</div>
-      <div class="s">added to every session, before you type</div>
-    </div>
-    <div class="card">
-      <div class="k">Plugins active</div>
-      <div class="v">${d.plugins.filter(p=>p.active).length}<span style="color:var(--faint);font-size:16px">/${d.plugins.length}</span></div>
-      <div class="s">${esc(d.plugins.filter(p=>!p.active).map(p=>p.name).join(', ')||'all healthy')}</div>
+// ── tooltip for burn bars (event delegation, survives redraws) ─────────────
+const tip=$('tip');
+function burnMove(e){
+  const svg=$('burn'); if(!svg._hrs) return;
+  const r=svg.getBoundingClientRect();
+  const relX=(e.clientX-r.left)/r.width*720;
+  const i=Math.floor(relX/svg._slot);
+  if(i<0||i>=svg._hrs.length){ tip.classList.remove('on'); return; }
+  const h=svg._hrs[i], b=svg._by, lab=h===0?'12am':h<12?h+'am':h===12?'12pm':(h-12)+'pm';
+  tip.innerHTML=`<div class="h">${lab}–${((h+1)%24)===0?'12am':((h+1)%24)<12?((h+1)%24)+'am':((h+1)%24)===12?'12pm':(((h+1)%24)-12)+'pm'}</div>`+
+    `<div class="r"><span style="color:var(--claude)">claude</span><span>${fmt(b.c[h])}</span></div>`+
+    `<div class="r"><span style="color:var(--codex)">codex</span><span>${fmt(b.x[h])}</span></div>`+
+    `<div class="r" style="border-top:1px solid var(--line);margin-top:3px;padding-top:3px"><span>total</span><span>${fmt(b.totals[h])}</span></div>`;
+  tip.classList.add('on');
+  const tw=tip.offsetWidth, th=tip.offsetHeight;
+  tip.style.left=Math.min(window.innerWidth-tw-8,Math.max(8,e.clientX-tw/2))+'px';
+  tip.style.top=Math.max(8,e.clientY-th-12)+'px';
+}
+$('burn').addEventListener('mousemove',burnMove);
+$('burn').addEventListener('mouseleave',()=>tip.classList.remove('on'));
+
+// ── KPIs ───────────────────────────────────────────────────────────────────
+function renderKpis(d){
+  const t=d.totals, sp=d.spend;
+  const flash=(sp.todayTotal!==prevToday && prevToday!==null); prevToday=sp.todayTotal;
+  const sig=[t.savedTokens,t.savedCost,sp.todayTotal,sp.claudeTodayTotal,sp.codexTodayTotal,d.activeSessions,d.sessions.length,t.alwaysOnTokens].join('|');
+  if(sig===sigKpi){ if(flash){const v=$('kToday'); if(v){v.classList.remove('flash');void v.offsetWidth;v.classList.add('flash');}} return; }
+  sigKpi=sig;
+  $('kpis').innerHTML=`
+    <div class="kpi"><div class="eyebrow">Tokens saved</div><div class="v ok">${fmt(t.savedTokens)}</div>
+      <div class="s">${usd(t.savedCost)} avoided · <b>${t.measuredCount}/${t.measuredCount+t.unmeasuredCount}</b> measured</div></div>
+    <div class="kpi"><div class="eyebrow">Tokens used today</div><div class="v" id="kToday">${fmt(sp.todayTotal)}</div>
+      <div class="s">claude <b>${fmt(sp.claudeTodayTotal)}</b> · codex <b>${fmt(sp.codexTodayTotal)}</b></div></div>
+    <div class="kpi"><div class="eyebrow">Live sessions</div><div class="v">${d.activeSessions}<span style="color:var(--mute);font-size:16px">/${d.sessions.length}</span></div>
+      <div class="s">active now · ${d.sessions.length} within 6h</div></div>
+    <div class="kpi"><div class="eyebrow">Always-on cost</div><div class="v warn">${fmt(t.alwaysOnTokens)}</div>
+      <div class="s">context added every session</div></div>`;
+}
+
+// ── session tiles ────────────────────────────────────────────────────────────
+function visibleSessions(d){
+  const s=d.sessions.slice();
+  return showAll ? s : s.slice(0,8);
+}
+function renderTiles(d){
+  const list=visibleSessions(d);
+  const maxTok=Math.max(1,...d.sessions.map(s=>s.tokens.total));
+  const sig=list.map(s=>`${s.cli}:${s.id}:${Math.round(s.tokens.total/1e4)}:${s.active}:${s.todayTotal}`).join('|')+`/${showAll}`;
+  $('sesscount').textContent=`${d.activeSessions} live · ${d.sessions.length} today · ${fmt(d.spend.todayTotal)} tokens`;
+  const tog=$('toggleSess'); tog.textContent = d.sessions.length>8 ? (showAll?'show top 8':`show all ${d.sessions.length}`) : '';
+  if(sig===sigTiles){ list.forEach(s=>{const el=document.querySelector(`[data-sid="${s.cli}:${s.id}"]`); if(el) updateTileLive(el,s);}); return; }
+  sigTiles=sig;
+  $('tiles').innerHTML = list.length ? list.map(s=>{
+    const w=Math.max(3,Math.round(s.tokens.total/maxTok*100));
+    return `<div class="tile" tabindex="0" role="button" data-sid="${esc(s.cli)}:${esc(s.id)}">
+      <div class="top"><span class="cdot" style="background:${col(s.cli)}"></span>
+        <span class="proj" title="${esc(s.label)}">${esc(s.label)}</span>
+        ${s.active?'<span class="live"><span class="minidot"></span>live</span>':`<span class="idle" data-rel>${rel(s.lastTs)}</span>`}</div>
+      <div class="num">${fmt(s.tokens.total)}</div>
+      <div class="meta"><span class="cli ${esc(s.cli)}">${esc(s.cli)}</span><span>${esc(s.model||'')}${s.aggregate?' · '+s.count+' sessions':''}</span></div>
+      <div class="mbar"><i style="width:${w}%;background:${col(s.cli)}"></i></div>
     </div>`;
+  }).join('') : `<div class="empty" style="grid-column:1/-1">no sessions active in the last 6 hours</div>`;
+}
+function updateTileLive(el,s){
+  const num=el.querySelector('.num'); if(num) num.textContent=fmt(s.tokens.total);
+  const idle=el.querySelector('[data-rel]'); if(idle) idle.textContent=rel(s.lastTs);
+}
 
-  // Alerts: anything registered but not actually doing its job.
-  const alerts=[];
-  for(const p of d.plugins){
-    if(p.active) continue;
-    if(p.id==='rtk') alerts.push({sev:'bad',msg:`<b>rtk hook is broken.</b> The binary exists at <code>~/.headroom/bin/rtk</code> but does not resolve on the hook's PATH, so <code>rtk hook claude</code> fails silently on every Bash call — it has saved nothing.`,fix:`Fix: symlink it onto PATH — <code>ln -s ~/.headroom/bin/rtk /usr/local/bin/rtk</code>`});
-    else if(p.id==='headroom') alerts.push({sev:'bad',msg:`<b>headroom is not compressing.</b> Its MCP tools work, but the proxy is down and Claude Code is not routed through it — current savings are zero. The ${fmt(p.savedTokens)} below is lifetime history.`,fix:`Fix: <code>headroom proxy</code> then <code>headroom wrap claude</code>`});
-    else alerts.push({sev:'bad',msg:`<b>${esc(p.name)} is down.</b> ${esc(p.detail)}`,fix:''});
-  }
-  if(t.unmeasuredCount) alerts.push({sev:'w',
-    msg:`<b>${t.unmeasuredCount} plugins report no token savings data:</b> ${esc(t.unmeasured.join(', '))}.`,
-    fix:`These expose no savings ledger, so they are shown as "not measured" rather than zero. The total above deliberately excludes them — it is not an estimate.`});
-  document.getElementById('alerts').innerHTML = alerts.map(a=>
-    `<div class="alert ${a.sev==='w'?'w':''}">${a.msg}${a.fix?`<span class="fix">${a.fix}</span>`:''}</div>`).join('');
-
-  // Live sessions — one row per active/recent session, per CLI, updating live.
-  document.getElementById('sesscount').textContent =
-    `${d.activeSessions} active · ${sess.length} within 6h · cumulative today ${fmt(sp.todayTotal)}`;
-  document.getElementById('sessions').innerHTML = sess.length ? sess.map(s=>`
-    <tr>
-      <td><span class="clibadge ${esc(s.cli)}">${esc(s.cli)}</span></td>
-      <td><div class="pname">${esc(s.label)}</div><div class="pkind">${esc(String(s.id).slice(0,8))}</div></td>
-      <td class="n">${fmt(s.tokens.total)}</td>
-      <td class="n">${s.todayTotal?fmt(s.todayTotal):'—'}</td>
-      <td class="n">${fmt(s.tokens.output)}</td>
-      <td class="n">${fmt(s.tokens.cacheRead)}</td>
-      <td><span class="pill ${s.active?'up':'idle'}">${s.active?'● live':rel(s.lastTs)}</span></td>
-    </tr>`).join('') : `<tr><td colspan="7" class="nm">no sessions active in the last 6 hours</td></tr>`;
-
-  // Per-plugin rows.
-  document.getElementById('plugcount').textContent = `${d.plugins.length} installed`;
-  document.getElementById('rows').innerHTML = d.plugins.map(p=>{
-    let saved;
-    if(p.savedTokens==null) saved=`<span class="nm">not measured</span>`;
-    else if(p.savedTokens<0) saved=`<span class="neg">${fmt(p.savedTokens)}</span><div class="note">net overhead, not savings</div>`;
-    else saved=`<span class="saved">${fmt(p.savedTokens)}</span>`+
-      (p.savedCost?`<div class="note">${usd(p.savedCost)} avoided</div>`:'')+
-      (p.savedPct?`<div class="bar"><i style="width:${Math.min(100,p.savedPct)}%"></i></div>`:'');
-    const cost = p.alwaysOnTokens!=null
-      ? `<b>${p.alwaysOnTokens.toLocaleString()}</b>`
-      : `<span class="nm">on demand</span>`;
-    return `<tr>
-      <td><div class="pname">${esc(p.name)}</div><div class="pkind">${esc(p.kind)}</div>
-          <div class="clis">${clis(p.clis)}</div></td>
-      <td><span class="pill ${p.active?'up':'down'}">${p.active?'●':'✕'} ${esc(p.status)}</span>
-          <div class="pdetail">${esc(p.detail)}</div></td>
-      <td class="n">${cost}${p.tokensNote?`<div class="note">${esc(p.tokensNote)}</div>`:''}</td>
-      <td class="n">${saved}</td>
-    </tr>`;
+// ── plugins ──────────────────────────────────────────────────────────────────
+function pvalHtml(p){
+  if(p.savedTokens==null) return `<span class="pval nm">not measured</span>`;
+  if(p.savedTokens<0) return `<span class="pval neg">${fmt(p.savedTokens)}</span>`;
+  return `<span class="pval saved">${fmt(p.savedTokens)}</span>`;
+}
+function renderPlugs(d){
+  // Structural signature only — NOT the live savedTokens (headroom's grows every
+  // tick). Value changes update in place below, so an expanded row stays open.
+  const sig=d.plugins.map(p=>`${p.id}:${p.active}:${p.alwaysOnTokens}:${p.status}:${(p.clis||[]).join('+')}`).join('|');
+  const saving=d.plugins.filter(p=>typeof p.savedTokens==='number'&&p.savedTokens>0).length;
+  const broken=d.plugins.filter(p=>!p.active).length;
+  $('extcount').textContent=`${d.plugins.length} installed · ${saving} saving${broken?` · ${broken} need attention`:''}`;
+  if(sig!==sigPlugs){ sigPlugs=sig; buildPlugs(d); }
+  // in-place value refresh (cheap; preserves expand state)
+  d.plugins.forEach(p=>{ const cell=document.querySelector(`.prow[data-pid="${cssq(p.id)}"] .pcell`); if(cell) cell.innerHTML=pvalHtml(p)+`<span class="caret">▸</span>`; });
+}
+const cssq=s=>String(s).replace(/"/g,'\\"');
+function buildPlugs(d){
+  $('plugs').innerHTML=d.plugins.map(p=>{
+    const stcls=p.active?(typeof p.savedTokens==='number'&&p.savedTokens<0?'neutral':'up'):'down';
+    const val=pvalHtml(p);
+    const cost=p.alwaysOnTokens!=null?`${p.alwaysOnTokens.toLocaleString()} tok/session`:'on demand';
+    const fix = !p.active ? (
+      p.id==='rtk'?`Symlink it onto PATH: <code>ln -s ~/.headroom/bin/rtk /usr/local/bin/rtk</code>`:
+      p.id==='headroom'?`Start it: <code>headroom proxy</code> then <code>headroom wrap claude</code>`:'') : '';
+    return `<div class="prow${openPlugs.has(p.id)?' open':''}" data-pid="${esc(p.id)}">
+        <span class="st ${stcls}"></span>
+        <div class="pname">${esc(p.name)} <span class="pkind">${esc(p.kind)}</span> ${(p.clis||[]).map(c=>`<span class="cli ${c}">${c}</span>`).join('')}</div>
+        <div class="pmid">${esc(p.status)}</div>
+        <div class="pcell" style="display:flex;align-items:center;justify-content:flex-end">${val}<span class="caret">▸</span></div>
+      </div>
+      <div class="pdetail">
+        <div class="d">${esc(p.detail)}</div>
+        ${fix?`<div class="fix">${fix}</div>`:''}
+        ${p.tokensNote?`<div class="note">${esc(p.tokensNote)}</div>`:''}
+        <div class="note">${cost}${p.savedCost?` · ${usd(p.savedCost)} avoided lifetime`:''}${p.savedPct?` · ${p.savedPct}% smaller`:''}</div>
+      </div>`;
   }).join('');
+}
 
-  document.getElementById('foot').innerHTML =
-    `<b>Sources —</b> savings: <code>headroom savings --json</code>, tokensave <code>savings_ledger</code>. `+
-    `Per-session cost: <code>claude plugin details</code>. Usage: Claude Code + Codex session transcripts `+
-    `(${sp.sessions} recent sessions, ${fmt(sp.allTimeTotal)} tokens all-time). Health: live probes of :37701 and :8787.<br>`+
-    `<b>No number on this page is estimated or inferred.</b> Per-session token counts are read directly from each CLI's own transcript; where a plugin exposes no savings ledger, it says so.`;
+// ── drawer ───────────────────────────────────────────────────────────────────
+function openDrawer(cli,id){
+  openSession={cli,id}; fillDrawer();
+  $('drawer').classList.add('on'); $('drawer').setAttribute('aria-hidden','false'); $('scrim').classList.add('on');
+}
+function closeDrawer(){ openSession=null; $('drawer').classList.remove('on'); $('drawer').setAttribute('aria-hidden','true'); $('scrim').classList.remove('on'); }
+function fillDrawer(){
+  if(!openSession||!state) return;
+  const s=state.sessions.find(x=>x.cli===openSession.cli&&x.id===openSession.id);
+  const dr=$('drawer');
+  if(!s){ dr.innerHTML=`<button class="dclose" onclick="closeDrawer()">✕</button><div class="did" style="margin-top:30px">session no longer active</div>`; return; }
+  const tk=s.tokens, tot=tk.total||1;
+  const parts=[['input',tk.input,'var(--claude)'],['output',tk.output,'var(--codex)'],['cache read',tk.cacheRead,'var(--mute)'],['cache write',tk.cacheWrite,'var(--dim)']];
+  const cacheShare=Math.round((tk.cacheRead/tot)*100);
+  const exts=state.plugins.filter(p=>(p.clis||[]).includes(s.cli));
+  dr.innerHTML=`
+    <button class="dclose" onclick="closeDrawer()" aria-label="Close">✕</button>
+    <div class="dhead"><span class="cdot" style="background:${col(s.cli)}"></span><span class="p">${esc(s.label)}</span>
+      <span class="cli ${esc(s.cli)}">${esc(s.cli)}</span></div>
+    <div class="did">${esc(s.model||'')} · ${s.aggregate?esc(s.count+' background compression sessions'):esc(String(s.id))}</div>
+    <div class="dbig">${fmt(tot)}<span class="u">tokens total</span></div>
+    <div class="compbar">${parts.filter(p=>p[1]>0).map(p=>`<i style="width:${(p[1]/tot*100).toFixed(1)}%;background:${p[2]}" title="${p[0]}"></i>`).join('')}</div>
+    <div class="eyebrow" style="margin-top:6px">${s.active?'● live now':'last active '+rel(s.lastTs)+' ago'} · ${cacheShare}% from cache</div>
+    <div class="brk">
+      ${parts.map(p=>`<div class="row"><span class="k">${p[0]}</span><span class="val">${fmt(p[1])}</span></div>`).join('')}
+      <div class="row"><span class="k">used today</span><span class="val">${fmt(s.todayTotal)}</span></div>
+    </div>
+    <div class="dsub">Extensions on ${esc(s.cli)}</div>
+    ${exts.map(p=>`<div class="dext"><span class="st ${p.active?'up':'down'}" style="background:${p.active?'var(--ok)':'var(--bad)'}"></span>
+      <span class="nm">${esc(p.name)}</span><span class="k">${esc(p.active?p.status:'down')}</span></div>`).join('')}
+    <div class="dnote">Per-session token counts come straight from this CLI's own transcript. Extension status is per-CLI — savings ledgers aren't attributed per session, so those numbers stay at the top level.</div>`;
+}
 
-  const dot=document.getElementById('dot');
-  dot.className='dot';
-  document.getElementById('livetxt').textContent='live · '+new Date(d.ts).toLocaleTimeString();
+// ── event wiring (delegation) ────────────────────────────────────────────────
+$('tiles').addEventListener('click',e=>{const t=e.target.closest('.tile'); if(!t)return; const [cli,...id]=t.dataset.sid.split(':'); openDrawer(cli,id.join(':'));});
+$('tiles').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){const t=e.target.closest('.tile'); if(t){e.preventDefault(); const [cli,...id]=t.dataset.sid.split(':'); openDrawer(cli,id.join(':'));}}});
+$('plugs').addEventListener('click',e=>{const r=e.target.closest('.prow'); if(!r)return; const on=r.classList.toggle('open'); const id=r.dataset.pid; on?openPlugs.add(id):openPlugs.delete(id);});
+$('scrim').addEventListener('click',closeDrawer);
+$('toggleSess').addEventListener('click',()=>{showAll=!showAll; sigTiles=''; if(state) renderTiles(state);});
+document.addEventListener('keydown',e=>{if(e.key==='Escape') closeDrawer();});
+
+// ── main update ──────────────────────────────────────────────────────────────
+let raf=0;
+function render(d){
+  if(d.error){ $('livetxt').textContent='error: '+d.error; $('dot').className='dot dead'; return; }
+  state=d;
+  cancelAnimationFrame(raf);
+  raf=requestAnimationFrame(()=>{
+    renderKpis(d);
+    const bh=d.charts&&d.charts.byHour; if(bh){ const bsig=bh.claude.join(',')+'|'+bh.codex.join(','); if(bsig!==sigBurn){sigBurn=bsig; drawBurn(bh);} }
+    const claudeToday=d.spend.claudeTodayTotal||0;
+    drawRing(claudeToday? (d.spend.today.cacheRead/claudeToday*100) : null);
+    renderTiles(d); renderPlugs(d);
+    if(openSession) fillDrawer();
+    $('dot').className='dot';
+    $('livetxt').textContent='live · '+new Date(d.ts).toLocaleTimeString();
+    $('foot').innerHTML=`<b>Sources —</b> per-session tokens from Claude Code (<code>~/.claude/projects</code>) &amp; Codex (<code>~/.codex/sessions</code>) transcripts; `+
+      `savings from each tool's own ledger; health from live probes. <b>${fmt(d.spend.allTimeTotal)}</b> tokens all-time across <b>${d.spend.sessions}</b> recent sessions. `+
+      `Nothing here is estimated — unmeasured plugins say so.`;
+  });
 }
 
 let es;
 function connect(){
-  es = new EventSource('/events');
-  es.onmessage = e => render(JSON.parse(e.data));
-  es.onerror = () => {
-    document.getElementById('dot').className='dot dead';
-    document.getElementById('livetxt').textContent='disconnected — retrying';
-  };
+  es=new EventSource('/events');
+  es.onmessage=e=>{ try{render(JSON.parse(e.data));}catch(_){} };
+  es.onerror=()=>{ $('dot').className='dot dead'; $('livetxt').textContent='reconnecting…'; };
 }
 connect();
 </script>

@@ -11,11 +11,15 @@ Zero npm dependencies (Node stdlib only).
 
 ## What it shows
 
-- **Live sessions** — one row per active/recent Claude Code or Codex session, with
-  per-session token detail (total, today, output, cache read) updating live. Works with
-  any number of concurrent sessions across both CLIs; the cumulative totals stay accurate.
-- **Tokens used today** — combined across Claude Code + Codex, read straight from each
-  CLI's own session transcripts. Never estimated.
+- **Live sessions** — a clickable tile per active/recent Claude Code or Codex session.
+  Click one for a drawer with its full token breakdown, cache-read share, model, and
+  which extensions serve that CLI. Any number of concurrent sessions across both CLIs;
+  cumulative totals stay accurate. claude-mem's background compression sessions collapse
+  into one aggregate tile so they don't drown out your real work.
+- **Token burn today, by hour** — a stacked chart split by CLI (Claude violet, Codex
+  teal; both CVD-validated), with a hover tooltip. The bucketed values sum exactly to the
+  headline "tokens used today" — the chart is the same source, not a separate estimate.
+- **Cache-read share** — how much of today's Claude tokens came from cache (cheap).
 - **Tokens saved** per plugin, pulled from the tool's own ledger — never estimated.
 - **Always-on context cost** each plugin adds per session.
 - **Per-CLI reach** — which extensions serve Claude Code, Codex, or both.
@@ -45,17 +49,25 @@ node server.js        # → http://127.0.0.1:37800
 ```
 
 **Codex CLI** — a shell wrapper in `~/.zshrc` / `~/.bashrc` boots the dashboard on `codex`
-start (idempotent; open-once so it never spams browser tabs):
+start:
 
 ```sh
 codex() {
-  CLAUDE_DASH_OPEN=once "$HOME/.claude/plugin-dashboard/launch.sh" >/dev/null 2>&1 &
+  CLAUDE_DASH_OPEN=smart "$HOME/.claude/plugin-dashboard/launch.sh" >/dev/null 2>&1 &
   command codex "$@"
 }
 ```
 
-`launch.sh` is idempotent (won't double-start) and opens a browser tab. Control tab
-behavior with `CLAUDE_DASH_OPEN=every|once|never`.
+`launch.sh` is idempotent (the server is a shared singleton — it won't double-start).
+Tab behavior is controlled by `CLAUDE_DASH_OPEN`:
+
+- `smart` (**default**) — open a tab only when no dashboard tab is currently open. The
+  server reports its live SSE-client count at `/health`; zero clients means no tab is
+  showing the dashboard. So it opens on your first session (and after you close the tab
+  and start a session again) but never spawns a duplicate tab for additional concurrent
+  sessions — no wasted memory.
+- `every` — open a tab every session · `once` — only when the server wasn't already
+  running · `never` — keep the server up, never open a tab.
 
 ## Files
 

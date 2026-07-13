@@ -341,6 +341,8 @@ async function discoveredPlugins() {
 // (todayAgg, rebucketed on date rollover). This makes the per-tick cost
 // proportional to newly-written bytes, not total history.
 const zero = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+const hours = () => new Array(24).fill(0);
+const addHours = (into, from) => { for (let i = 0; i < 24; i++) into[i] += from[i]; };
 const addU = (acc, u) => {
   acc.input += u.input_tokens || 0;
   acc.output += u.output_tokens || 0;
@@ -364,20 +366,27 @@ async function readTail(fp, from, to) {
 }
 
 // project dir name in ~/.claude/projects is the cwd with slashes -> dashes.
+// Produce a human label: recognize claude-mem's own worker sessions, and skip
+// generic path tails ("sessions", "tmp", …) so the real project name shows.
 function decodeProject(dir) {
-  const s = dir.replace(/^-/, '').replace(/-/g, '/');
-  const base = s.split('/').filter(Boolean).pop();
-  return base || dir;
+  const raw = dir.replace(/^-/, '');
+  const joined = '/' + raw.split('-').filter(Boolean).join('/');
+  if (/claude\/?-?mem/i.test(joined) || joined.includes('claude/mem')) return 'claude-mem';
+  const stop = new Set(['sessions', 'projects', 'tmp', 'private', 'users', 'var', 'folders']);
+  const segs = raw.split('-').filter(Boolean);
+  const meaningful = segs.filter((s) => !stop.has(s.toLowerCase()));
+  return (meaningful.length ? meaningful[meaningful.length - 1] : segs[segs.length - 1]) || dir;
 }
 
-const claudeCache = new Map(); // fp -> { size, mtimeMs, offset, leftover, dayMs, agg, todayAgg, lastTs, project, id }
+const claudeCache = new Map(); // fp -> { size, mtimeMs, offset, leftover, dayMs, agg, todayAgg, todayByHour, model, lastTs, project, id }
 
 async function claudeSpend(dayMs) {
   const today = zero(), allTime = zero();
+  const byHour = hours();
   const sessions = [];
   let dirs = [];
   try { dirs = await fsp.readdir(CLAUDE_PROJECTS, { withFileTypes: true }); }
-  catch { return { today, allTime, sessions }; }
+  catch { return { today, allTime, byHour, sessions }; }
 
   const seen = new Set();
   for (const d of dirs) {
@@ -395,14 +404,14 @@ async function claudeSpend(dayMs) {
       const rollover = ent && ent.dayMs !== dayMs;
       if (!ent || rollover) {
         ent = { size: 0, mtimeMs: 0, offset: 0, leftover: '', dayMs,
-                agg: zero(), todayAgg: zero(), lastTs: 0,
+                agg: zero(), todayAgg: zero(), todayByHour: hours(), model: null, lastTs: 0,
                 project: decodeProject(d.name), id: f.replace(/\.jsonl$/, '') };
       }
       // Unchanged since last read → reuse cached aggregates untouched.
       if (ent.size === st.size && ent.mtimeMs === st.mtimeMs && !rollover) {
         // no-op
       } else {
-        if (rollover) { ent.todayAgg = zero(); } // yesterday's "today" no longer counts
+        if (rollover) { ent.todayAgg = zero(); ent.todayByHour = hours(); } // yesterday no longer "today"
         const chunk = await readTail(fp, ent.offset, st.size);
         const text = ent.leftover + chunk;
         const parts = text.split('\n');
@@ -412,10 +421,15 @@ async function claudeSpend(dayMs) {
           let rec; try { rec = JSON.parse(line); } catch { continue; }
           const u = rec?.message?.usage;
           if (!u) continue;
+          if (rec?.message?.model) ent.model = rec.message.model;
           const ts = rec.timestamp ? Date.parse(rec.timestamp) : st.mtimeMs;
           if (ts > ent.lastTs) ent.lastTs = ts;
           addU(ent.agg, u);
-          if (ts >= dayMs) addU(ent.todayAgg, u);
+          if (ts >= dayMs) {
+            addU(ent.todayAgg, u);
+            const tot = (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+            ent.todayByHour[new Date(ts).getHours()] += tot;
+          }
         }
         ent.offset = st.size; ent.size = st.size; ent.mtimeMs = st.mtimeMs; ent.dayMs = dayMs;
         claudeCache.set(fp, ent);
@@ -423,10 +437,11 @@ async function claudeSpend(dayMs) {
 
       sumInto(today, ent.todayAgg);
       sumInto(allTime, ent.agg);
+      addHours(byHour, ent.todayByHour);
       const last = ent.lastTs || st.mtimeMs;
       if (Date.now() - last <= RECENT_MS && totalOf(ent.agg) > 0) {
         sessions.push({
-          cli: 'claude', id: ent.id, label: ent.project,
+          cli: 'claude', id: ent.id, label: ent.project, model: shortModel(ent.model),
           tokens: { ...ent.agg, total: totalOf(ent.agg) },
           todayTotal: totalOf(ent.todayAgg),
           lastTs: last,
@@ -436,7 +451,15 @@ async function claudeSpend(dayMs) {
   }
   // Drop cache entries for deleted files.
   for (const fp of claudeCache.keys()) if (!seen.has(fp)) claudeCache.delete(fp);
-  return { today, allTime, sessions };
+  return { today, allTime, byHour, sessions };
+}
+
+// Collapse a full model id to a short human label ("claude-opus-4-8[1m]" -> "opus-4.8").
+function shortModel(m) {
+  if (!m) return null;
+  const s = String(m).replace(/^claude-/, '').replace(/-\d{8}$/, '').replace(/\[1m\]$/, '');
+  const fam = s.match(/(opus|sonnet|haiku|fable)-?(\d+)-?(\d+)?/i);
+  return fam ? `${fam[1]}${fam[2] ? ' ' + fam[2] + (fam[3] ? '.' + fam[3] : '') : ''}` : s;
 }
 
 // ── Codex CLI spend ─────────────────────────────────────────────────────────
@@ -475,10 +498,11 @@ async function listCodexRollouts() {
 
 async function codexSpend(dayMs) {
   const allTime = zero();
+  const byHour = hours();
   const sessions = [];
   let todayTotal = 0;
   let files = [];
-  try { files = await listCodexRollouts(); } catch { return { allTime, sessions, todayTotal }; }
+  try { files = await listCodexRollouts(); } catch { return { allTime, byHour, sessions, todayTotal }; }
 
   const seen = new Set();
   for (const fp of files) {
@@ -491,8 +515,8 @@ async function codexSpend(dayMs) {
     const changed = !ent || ent.size !== st.size || ent.mtimeMs !== st.mtimeMs;
     if (changed || rollover) {
       const id = path.basename(fp).replace(/^rollout-|\.jsonl$/g, '');
-      ent = ent || { cum: zero(), todayTotal: 0, lastTs: 0, id, label: 'codex' };
-      ent.todayTotal = 0; // recomputed below
+      ent = ent || { cum: zero(), todayTotal: 0, todayByHour: hours(), model: null, lastTs: 0, id, label: 'codex' };
+      ent.todayTotal = 0; ent.todayByHour = hours(); // recomputed below
       // Today's files: full parse for accurate today-slice + label. Older files:
       // tail-read just the last cumulative total (cheap, no per-turn detail).
       let text;
@@ -505,9 +529,10 @@ async function codexSpend(dayMs) {
       let sawCum = false;
       for (const line of text.split('\n')) {
         if (!line) continue;
-        if (line.indexOf('token_count') === -1 && line.indexOf('cwd') === -1) continue;
+        if (line.indexOf('token_count') === -1 && line.indexOf('cwd') === -1 && line.indexOf('"model"') === -1) continue;
         let rec; try { rec = JSON.parse(line); } catch { continue; }
         if (rec?.payload?.cwd) ent.label = path.basename(rec.payload.cwd) || ent.label;
+        if (rec?.payload?.model) ent.model = rec.payload.model;
         const info = rec?.payload?.info;
         if (rec?.payload?.type !== 'token_count' || !info) continue;
         const ts = rec.timestamp ? Date.parse(rec.timestamp) : st.mtimeMs;
@@ -515,7 +540,9 @@ async function codexSpend(dayMs) {
         if (info.total_token_usage) { Object.assign(cum, codexMap(info.total_token_usage)); sawCum = true; }
         if (isTodayFile && ts >= dayMs && info.last_token_usage) {
           const d = codexMap(info.last_token_usage);
-          ent.todayTotal += d.input + d.output + d.cacheRead + d.cacheWrite;
+          const tot = d.input + d.output + d.cacheRead + d.cacheWrite;
+          ent.todayTotal += tot;
+          ent.todayByHour[new Date(ts).getHours()] += tot;
         }
       }
       if (sawCum) ent.cum = cum;
@@ -525,11 +552,12 @@ async function codexSpend(dayMs) {
 
     sumInto(allTime, ent.cum);
     todayTotal += ent.todayTotal;
+    addHours(byHour, ent.todayByHour);
 
     const last = ent.lastTs || st.mtimeMs;
     if (Date.now() - last <= RECENT_MS && totalOf(ent.cum) > 0) {
       sessions.push({
-        cli: 'codex', id: ent.id, label: ent.label,
+        cli: 'codex', id: ent.id, label: ent.label, model: shortModel(ent.model) || 'codex',
         tokens: { ...ent.cum, total: totalOf(ent.cum) },
         todayTotal: ent.todayTotal,
         lastTs: last,
@@ -537,7 +565,7 @@ async function codexSpend(dayMs) {
     }
   }
   for (const fp of codexCache.keys()) if (!seen.has(fp)) codexCache.delete(fp);
-  return { allTime, sessions, todayTotal };
+  return { allTime, byHour, sessions, todayTotal };
 }
 
 // Expensive sources (CLI spawns, full transcript scans) are memoized so the
@@ -557,6 +585,30 @@ function fmtUptime(s) {
   if (s < 60) return `${s}s`;
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+// claude-mem spawns one Claude session per compression job; a dozen near-identical
+// tiles is noise. Collapse them into a single aggregate tile (their tokens already
+// live in the day totals independently, so this is display-only — nothing hidden).
+function groupWorkers(sessions) {
+  const workers = sessions.filter((s) => s.cli === 'claude' && s.label === 'claude-mem');
+  if (workers.length < 2) return sessions;
+  const rest = sessions.filter((s) => !(s.cli === 'claude' && s.label === 'claude-mem'));
+  const tokens = zero();
+  let todayTotal = 0, lastTs = 0, active = false;
+  for (const w of workers) {
+    tokens.input += w.tokens.input; tokens.output += w.tokens.output;
+    tokens.cacheRead += w.tokens.cacheRead; tokens.cacheWrite += w.tokens.cacheWrite;
+    todayTotal += w.todayTotal || 0;
+    if (w.lastTs > lastTs) lastTs = w.lastTs;
+    if (w.active) active = true;
+  }
+  rest.push({
+    cli: 'claude', id: 'claude-mem-workers', label: 'claude-mem', model: 'haiku · background',
+    aggregate: true, count: workers.length,
+    tokens: { ...tokens, total: totalOf(tokens) }, todayTotal, lastTs, active,
+  });
+  return rest;
 }
 
 async function collectAll() {
@@ -598,9 +650,10 @@ async function collectAll() {
   const alwaysOn = plugins.reduce((a, p) => a + (p.alwaysOnTokens || 0), 0);
 
   // Merge per-session lists across CLIs, active-first then most-recent.
-  const sessions = [...cSpend.sessions, ...xSpend.sessions]
-    .map((s) => ({ ...s, active: Date.now() - s.lastTs <= ACTIVE_MS }))
-    .sort((a, b) => (b.active - a.active) || (b.lastTs - a.lastTs));
+  let sessions = [...cSpend.sessions, ...xSpend.sessions]
+    .map((s) => ({ ...s, active: Date.now() - s.lastTs <= ACTIVE_MS }));
+  sessions = groupWorkers(sessions);
+  sessions.sort((a, b) => (b.active - a.active) || (b.lastTs - a.lastTs));
 
   const claudeTodayTotal = totalOf(cSpend.today);
   const codexTodayTotal = xSpend.todayTotal || 0;
@@ -629,6 +682,10 @@ async function collectAll() {
     },
     sessions,
     activeSessions: sessions.filter((s) => s.active).length,
+    // Intraday token burn, split by CLI identity (24 hourly buckets, local time).
+    charts: {
+      byHour: { claude: cSpend.byHour, codex: xSpend.byHour },
+    },
   };
 }
 
