@@ -1,30 +1,64 @@
 'use strict';
-// Unified plugin dashboard — single localhost page for every Claude Code
-// plugin/MCP/hook on this machine. Pushes live updates over SSE.
+// Unified plugin dashboard — a single localhost page for every Claude Code and
+// Codex CLI plugin/MCP/hook on this machine. Pushes live updates over SSE.
 //
-// Start:  node ~/.claude/plugin-dashboard/server.js
-// Page:   http://127.0.0.1:37800
+// Real-time: a 1s heartbeat refreshes savings/health, and fs.watch on both
+// CLIs' transcript directories triggers an immediate (debounced) push the
+// instant a session writes a token — so "tokens used today" moves in near
+// real time without polling the 90MB+ of transcripts on a timer.
+//
+// Start: node ~/.claude/plugin-dashboard/server.js
+// Page:  http://127.0.0.1:37800
 
 const http = require('node:http');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { collectAll } = require('./collectors.js');
 
 const PORT = Number(process.env.CLAUDE_DASH_PORT || 37800);
 const HOST = '127.0.0.1';
-const TICK_MS = 3000;
+const TICK_MS = 1000;          // heartbeat: keeps savings/health fresh
+const WATCH_DEBOUNCE_MS = 150; // coalesce transcript-write bursts into one push
+
+const HOME = os.homedir();
+const WATCH_DIRS = [
+  path.join(HOME, '.claude/projects'),
+  path.join(HOME, '.codex/sessions'),
+];
 
 const clients = new Set();
 let last = null;
+let ticking = false;
 
 async function tick() {
+  if (ticking) return;         // never overlap collections
+  ticking = true;
   try {
     last = await collectAll();
-    const payload = `data: ${JSON.stringify(last)}\n\n`;
-    for (const res of clients) res.write(payload);
+    broadcast(`data: ${JSON.stringify(last)}\n\n`);
   } catch (e) {
-    const payload = `data: ${JSON.stringify({ error: String(e && e.message || e) })}\n\n`;
-    for (const res of clients) res.write(payload);
+    broadcast(`data: ${JSON.stringify({ error: String((e && e.message) || e) })}\n\n`);
+  } finally {
+    ticking = false;
+  }
+}
+
+function broadcast(payload) {
+  for (const res of clients) res.write(payload);
+}
+
+// fs.watch fires on every transcript append. Debounce so a burst of writes
+// collapses into a single collect+push.
+let debounce = null;
+function onChange() {
+  if (debounce) return;
+  debounce = setTimeout(() => { debounce = null; tick(); }, WATCH_DEBOUNCE_MS);
+}
+function startWatchers() {
+  for (const dir of WATCH_DIRS) {
+    try { fs.watch(dir, { recursive: true }, onChange); }
+    catch { /* dir may not exist (e.g. Codex not installed) — skip it */ }
   }
 }
 
@@ -64,11 +98,11 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(404).end('not found');
 });
 
-// Refuse to double-start: if the port is taken, assume a dashboard is already
-// up and exit quietly. The session hook relies on this being idempotent.
+// Refuse double-start: if the port is taken, assume a dashboard is already up
+// and exit quietly. The SessionStart hook relies on this being idempotent.
 server.on('error', (e) => {
   if (e.code === 'EADDRINUSE') {
-    console.log(`dashboard already running at http://${HOST}:${PORT}`);
+    console.log(`dashboard already running: http://${HOST}:${PORT}`);
     process.exit(0);
   }
   console.error(e);
@@ -79,4 +113,5 @@ server.listen(PORT, HOST, () => {
   console.log(`dashboard: http://${HOST}:${PORT}`);
   tick();
   setInterval(tick, TICK_MS);
+  startWatchers();
 });
