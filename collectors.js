@@ -254,6 +254,57 @@ async function enabledPlugins() {
   return enabled;
 }
 
+// Parse `claude plugin list` into structured records: name, marketplace,
+// version, scope, enabled. This is the source of truth for what is installed.
+async function listPlugins() {
+  const r = await run('claude', ['plugin', 'list'], 20000);
+  const out = [];
+  let cur = null;
+  for (const line of r.stdout.split('\n')) {
+    const m = line.match(/❯\s*([\w.-]+)@([\w.-]+)/);
+    if (m) { cur = { name: m[1], marketplace: m[2], version: null, scope: null, enabled: false }; out.push(cur); continue; }
+    if (!cur) continue;
+    const v = line.match(/Version:\s*([\w.-]+)/); if (v) cur.version = v[1];
+    const s = line.match(/Scope:\s*(\w+)/); if (s) cur.scope = s[1];
+    if (/Status:.*enabled/i.test(line)) cur.enabled = true;
+  }
+  return out;
+}
+
+// Generic collector for Claude Code plugins that have no dedicated card above.
+// These are skill/command/hook plugins with no savings ledger — they cost
+// context tokens and save nothing measurable, which is exactly what we show.
+// Auto-discovered, so any plugin installed later appears with no code change.
+const DEDICATED = new Set(['claude-mem', 'ponytail', 'headroom']);
+async function discoveredPlugins() {
+  const list = await listPlugins();
+  const generic = list.filter((p) => !DEDICATED.has(p.name));
+  const cards = await Promise.all(generic.map(async (p) => {
+    const d = await run('claude', ['plugin', 'details', `${p.name}@${p.marketplace}`], 20000);
+    const cost = d.stdout.match(/Always-on:\s*~?([\d,]+)\s*tok/i);
+    const parts = [];
+    for (const kind of ['Skills', 'Agents', 'Hooks', 'Commands', 'MCP servers']) {
+      const m = d.stdout.match(new RegExp(`${kind}\\s*\\((\\d+)\\)`, 'i'));
+      if (m && Number(m[1]) > 0) parts.push(`${m[1]} ${kind.toLowerCase()}`);
+    }
+    return {
+      id: p.name,
+      name: p.name,
+      kind: `plugin · ${p.marketplace}`,
+      active: p.enabled,
+      status: p.enabled ? `enabled · v${p.version ?? '?'}` : 'disabled',
+      detail: (parts.join(' · ') || 'no components') + ` · ${p.scope ?? '?'} scope`,
+      savedTokens: null,
+      savedCost: null,
+      savedPct: null,
+      calls: null,
+      alwaysOnTokens: cost ? Number(cost[1].replace(/,/g, '')) : null,
+      tokensNote: 'skills/commands plugin — no savings ledger; costs context only',
+    };
+  }));
+  return cards;
+}
+
 // ── actual Claude Code token spend (ground truth from session transcripts) ──
 // This is real usage, read from the same JSONL the CLI writes. It is TOTAL
 // spend, not per-plugin — no per-plugin attribution exists, and we do not
@@ -330,16 +381,18 @@ async function collectAll() {
     memo('costs', 120000, pluginTokenCosts),
     memo('enabled', 30000, enabledPlugins),
   ]);
-  const [hr, ts, rk, cm, pt, spend] = await Promise.all([
+  const [hr, ts, rk, cm, pt, disc, spend] = await Promise.all([
     memo('headroom', 5000, headroom),
     memo('tokensave', 5000, tokensave),
     memo('rtk', 30000, rtk),
     claudeMem(costs),                    // live: worker health must be realtime
     ponytail(costs, enabled.has('ponytail')),
+    memo('discovered', 30000, discoveredPlugins),
     memo('spend', 20000, tokenSpend),
   ]);
 
-  const plugins = [hr, cm, ts, pt, rk];
+  // Dedicated cards first, then any auto-discovered Claude Code plugins.
+  const plugins = [hr, cm, ts, pt, rk, ...disc];
 
   // Only sum sources that actually measured something. A null stays out of the
   // total; it does not silently become 0.
