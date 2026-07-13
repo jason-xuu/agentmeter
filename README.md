@@ -11,6 +11,10 @@ Zero npm dependencies (Node stdlib only).
 
 ## What it shows
 
+- **Messages** — a live, per-message feed: for every message you send it shows how many
+  tokens it cost, how much headroom compressed out (with %/$ avoided), which CLI, and which
+  model — read straight from headroom's per-call log (`~/.headroom/savings_events.jsonl`),
+  never estimated. Includes a sparkline of per-message token usage with a hover tooltip.
 - **Live sessions** — a clickable tile per active/recent Claude Code or Codex session.
   Click one for a drawer with its full token breakdown, cache-read share, model, and
   which extensions serve that CLI. Any number of concurrent sessions across both CLIs;

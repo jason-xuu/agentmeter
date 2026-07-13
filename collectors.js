@@ -21,6 +21,7 @@ const HEADROOM_PROXY = 'http://127.0.0.1:8787';
 const CLAUDE_PROJECTS = path.join(HOME, '.claude/projects');
 const CODEX_SESSIONS = path.join(HOME, '.codex/sessions');
 const CODEX_CONFIG = path.join(HOME, '.codex/config.toml');
+const HEADROOM_EVENTS = path.join(HOME, '.headroom/savings_events.jsonl');
 
 // A session counts as "live" if its transcript was written within this window.
 const ACTIVE_MS = 90 * 1000;
@@ -587,6 +588,37 @@ function fmtUptime(s) {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
+// ── per-message feed (headroom's per-call savings log) ──────────────────────
+// headroom appends one event per proxied API call to savings_events.jsonl:
+//   {ts, before, after, saved, cost_usd, model, client, source}
+// That is exactly "one message you sent": how many tokens it cost (after), how
+// much headroom compressed out (saved), which CLI (client), and which model.
+// Real measured values — nothing estimated. We read only the tail (newest N).
+async function recentMessages(limit = 32) {
+  let st;
+  try { st = await fsp.stat(HEADROOM_EVENTS); } catch { return { messages: [], live: false }; }
+  const text = await readTail(HEADROOM_EVENTS, Math.max(0, st.size - 64 * 1024), st.size);
+  const lines = text.split('\n');
+  const out = [];
+  for (let i = lines.length - 1; i >= 0 && out.length < limit; i--) {
+    const line = lines[i];
+    if (!line || line.indexOf('"before"') === -1) continue;
+    let e; try { e = JSON.parse(line); } catch { continue; }
+    if (typeof e.before !== 'number') continue;
+    out.push({
+      ts: e.ts ? Date.parse(e.ts) : st.mtimeMs,
+      model: shortModel(e.model) || e.model || '?',
+      client: e.client || e.source || 'proxy',
+      before: e.before, after: e.after ?? e.before,
+      saved: e.saved || 0,
+      savedPct: e.before ? +((e.saved || 0) / e.before * 100).toFixed(1) : 0,
+      cost: e.cost_usd || 0,
+    });
+  }
+  // Newest first. "live" = a message compressed within the last 5 minutes.
+  return { messages: out, live: out.length ? (Date.now() - out[0].ts < 5 * 60 * 1000) : false };
+}
+
 // claude-mem spawns one Claude session per compression job; a dozen near-identical
 // tiles is noise. Collapse them into a single aggregate tile (their tokens already
 // live in the day totals independently, so this is display-only — nothing hidden).
@@ -623,7 +655,7 @@ async function collectAll() {
     memo('enabled', 30000, enabledPlugins),
     memo('codexServers', 30000, codexMcpServers),
   ]);
-  const [hr, ts, rk, cm, pt, disc, cSpend, xSpend] = await Promise.all([
+  const [hr, ts, rk, cm, pt, disc, cSpend, xSpend, msgs] = await Promise.all([
     memo('headroom', 2000, headroom),
     memo('tokensave', 2000, tokensave),
     memo('rtk', 15000, rtk),
@@ -632,6 +664,7 @@ async function collectAll() {
     memo('discovered', 30000, discoveredPlugins),
     claudeSpend(dayMs),                  // live: incremental, cheap
     codexSpend(dayMs),                   // live: incremental, cheap
+    recentMessages(32),                  // live: per-message savings feed (tail read)
   ]);
 
   // Dedicated cards first, then any auto-discovered Claude Code plugins.
@@ -686,6 +719,10 @@ async function collectAll() {
     charts: {
       byHour: { claude: cSpend.byHour, codex: xSpend.byHour },
     },
+    // Per-message feed: newest-first, each with tokens used + saved + model + CLI.
+    messages: msgs.messages,
+    messagesLive: msgs.live,
+    compressor: hr.active ? 'headroom' : null,
   };
 }
 

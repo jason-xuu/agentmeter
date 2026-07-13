@@ -72,6 +72,19 @@
   .ringlabel .p{font-family:var(--mono);font-size:27px;font-weight:600;letter-spacing:-.02em}
   .ringlabel .l{font-size:10px;color:var(--mute);text-transform:uppercase;letter-spacing:.08em;margin-top:2px}
 
+  /* messages — per-message live feed (headroom per-call log) */
+  .msgbody{display:grid;grid-template-columns:minmax(190px,230px) 1fr;gap:22px;align-items:center;margin-top:11px}
+  .msg-model{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--dim);flex-wrap:wrap}
+  .msg-used{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:27px;font-weight:600;
+    letter-spacing:-.02em;margin-top:9px;line-height:1}
+  .msg-used small{font-size:12px;color:var(--mute);font-weight:400;margin-left:6px}
+  .msg-saved{font-size:12px;margin-top:8px;color:var(--ok);line-height:1.5}
+  .msg-saved b{font-weight:600}
+  .msg-saved .none{color:var(--mute)}
+  #msgspark{width:100%;height:66px;display:block;touch-action:none}
+  .msgdot{fill:var(--claude)}
+  @media (max-width:640px){.msgbody{grid-template-columns:1fr}}
+
   /* section head */
   .sect{display:flex;align-items:baseline;gap:10px;margin:20px 2px 10px}
   .sect h2{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--dim);font-weight:700;margin:0}
@@ -183,6 +196,22 @@
   </header>
 
   <div class="kpis" id="kpis"></div>
+
+  <div class="panel" id="msgpanel" style="margin-bottom:12px">
+    <div class="phead">
+      <span class="t">Messages</span>
+      <span class="eyebrow" style="letter-spacing:.08em">live · tokens &amp; savings per message you send</span>
+      <span class="legend" id="msgMeta"></span>
+    </div>
+    <div class="msgbody">
+      <div>
+        <div class="msg-model" id="msgModel">—</div>
+        <div class="msg-used" id="msgUsed">—</div>
+        <div class="msg-saved" id="msgSaved">—</div>
+      </div>
+      <svg id="msgspark" viewBox="0 0 620 66" preserveAspectRatio="none" role="img" aria-label="tokens per recent message"></svg>
+    </div>
+  </div>
 
   <div class="charts">
     <div class="panel">
@@ -311,6 +340,55 @@ function renderKpis(d){
     <div class="kpi"><div class="eyebrow">Always-on cost</div><div class="v warn">${fmt(t.alwaysOnTokens)}</div>
       <div class="s">context added every session</div></div>`;
 }
+
+// ── messages (per-message live feed) ─────────────────────────────────────────
+let sigMsg='';
+function renderMessages(d){
+  const m=d.messages||[];
+  if(!m.length){ $('msgModel').textContent='no compressed messages yet — headroom proxy may be down';
+    $('msgUsed').textContent='—'; $('msgSaved').innerHTML=''; $('msgMeta').textContent=''; return; }
+  const l=m[0], cli=String(l.client).includes('codex')?'codex':'claude';
+  $('msgModel').innerHTML=`<span class="cli ${cli}">${esc(l.client)}</span><span>${esc(l.model)}</span>`+
+    `<span style="color:var(--mute)">· ${rel(l.ts)} ago</span>`;
+  $('msgUsed').innerHTML=`${fmt(l.after)}<small>tokens this message</small>`;
+  $('msgSaved').innerHTML = l.saved>0
+    ? `<b>${fmt(l.saved)} saved</b> (${l.savedPct}%) · ${usd(l.cost)} · via ${esc(d.compressor||'headroom')}`
+    : `<span class="none">no compression on this message</span>`;
+  const wSaved=m.reduce((a,x)=>a+x.saved,0), wCost=m.reduce((a,x)=>a+x.cost,0);
+  $('msgMeta').innerHTML=`last ${m.length} · <b style="color:var(--ok)">${fmt(wSaved)}</b> saved · ${usd(wCost)}`;
+  const sig=l.ts+':'+m.length;
+  if(sig!==sigMsg){ sigMsg=sig; drawSpark(m); }
+}
+function drawSpark(m){
+  const svg=$('msgspark'), data=m.slice().reverse(); // oldest -> newest
+  const W=620,H=66,pad=6, n=data.length, vals=data.map(x=>x.after);
+  const max=Math.max(...vals), min=Math.min(...vals), rng=(max-min)||1;
+  const X=i=> n===1?W/2 : pad + i*(W-2*pad)/(n-1);
+  const Y=v=> H-pad - (v-min)/rng*(H-2*pad);
+  const line=data.map((d,i)=>`${i?'L':'M'}${X(i).toFixed(1)} ${Y(d.after).toFixed(1)}`).join(' ');
+  const area=`M${pad} ${H-pad} `+data.map((d,i)=>`L${X(i).toFixed(1)} ${Y(d.after).toFixed(1)}`).join(' ')+` L${X(n-1).toFixed(1)} ${H-pad} Z`;
+  const lx=X(n-1).toFixed(1), ly=Y(data[n-1].after).toFixed(1);
+  svg.innerHTML=`<defs><linearGradient id="mg" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="var(--claude)" stop-opacity=".26"/><stop offset="1" stop-color="var(--claude)" stop-opacity="0"/></linearGradient></defs>
+    <path d="${area}" fill="url(#mg)"/>
+    <path d="${line}" fill="none" stroke="var(--claude)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle class="msgdot" cx="${lx}" cy="${ly}" r="3.2"><animate attributeName="r" values="3.2;5.2;3.2" dur="1.8s" repeatCount="indefinite"/></circle>`;
+  svg._data=data;
+}
+$('msgspark').addEventListener('mousemove',e=>{
+  const svg=$('msgspark'); if(!svg._data||!svg._data.length) return; const data=svg._data;
+  const r=svg.getBoundingClientRect(), relX=(e.clientX-r.left)/r.width*620;
+  const step=(620-12)/Math.max(1,data.length-1); let i=Math.round((relX-6)/step);
+  i=Math.max(0,Math.min(data.length-1,i)); const d=data[i]; if(!d){tip.classList.remove('on');return;}
+  tip.innerHTML=`<div class="h">${new Date(d.ts).toLocaleTimeString()} · ${esc(d.model)}</div>`+
+    `<div class="r"><span>used</span><span>${fmt(d.after)}</span></div>`+
+    `<div class="r"><span style="color:var(--ok)">saved</span><span>${fmt(d.saved)} (${d.savedPct}%)</span></div>`+
+    `<div class="r" style="border-top:1px solid var(--line);margin-top:3px;padding-top:3px"><span>avoided</span><span>${usd(d.cost)}</span></div>`;
+  tip.classList.add('on'); const tw=tip.offsetWidth,th=tip.offsetHeight;
+  tip.style.left=Math.min(window.innerWidth-tw-8,Math.max(8,e.clientX-tw/2))+'px';
+  tip.style.top=Math.max(8,e.clientY-th-12)+'px';
+});
+$('msgspark').addEventListener('mouseleave',()=>tip.classList.remove('on'));
 
 // ── session tiles ────────────────────────────────────────────────────────────
 function visibleSessions(d){
@@ -444,6 +522,7 @@ function render(d){
   cancelAnimationFrame(raf);
   raf=requestAnimationFrame(()=>{
     renderKpis(d);
+    renderMessages(d);
     const bh=d.charts&&d.charts.byHour; if(bh){ const bsig=bh.claude.join(',')+'|'+bh.codex.join(','); if(bsig!==sigBurn){sigBurn=bsig; drawBurn(bh);} }
     const claudeToday=d.spend.claudeTodayTotal||0;
     drawRing(claudeToday? (d.spend.today.cacheRead/claudeToday*100) : null);

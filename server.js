@@ -25,6 +25,7 @@ const HOME = os.homedir();
 const WATCH_DIRS = [
   path.join(HOME, '.claude/projects'),
   path.join(HOME, '.codex/sessions'),
+  path.join(HOME, '.headroom'), // savings_events.jsonl — per-message compression log
 ];
 
 const clients = new Set();
